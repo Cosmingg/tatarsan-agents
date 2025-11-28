@@ -362,8 +362,21 @@ def text_extraction_node(state: AppState) -> AppState:
     if not path or ext is None or data is None:
         raise ValueError("file_path/file_ext/file_bytes not set for text extraction")
 
+    needs_ocr = ext in [".png", ".jpg", ".jpeg", ".pdf"]
+    if needs_ocr:
+        add_msg(
+            state,
+            f"[ocr] START: отправляю файл {Path(path).name} ({ext}) в Яндекс OCR.",
+        )
+
     text = extract_text_from_file(path, ext, data)
     state["raw_text"] = text
+    if needs_ocr:
+        status = "OK" if text else "EMPTY"
+        add_msg(
+            state,
+            f"[ocr] RESULT: получено {len(text)} символов (status={status}).",
+        )
     add_msg(state, f"[text_extraction] Extracted text of length {len(text)} chars.")
     # 👇 логируем превью распознанного текста (OCR / парсинг)
     preview = text[:500].replace("\n", " ")
@@ -389,7 +402,6 @@ def field_extraction_node(state: AppState) -> AppState:
         tu_json_for_prompt = "{}"
     else:
         tu_json_for_prompt = json.dumps(tu_cfg["data"], ensure_ascii=False, indent=2)
-
     schema = RequestFieldsModel.model_json_schema()
 
     system_msg = SystemMessage(

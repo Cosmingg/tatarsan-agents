@@ -265,6 +265,15 @@ def main() -> None:
     # ------------- Вкладка: Форма загрузки -------------
 
     with tab_upload:
+        # Выводим в консоль браузера сообщения OCR, если они пришли из последнего запуска
+        ocr_logs = st.session_state.pop("ocr_console_logs", None)
+        if ocr_logs:
+            for log in ocr_logs:
+                components.html(
+                    f"<script>console.log({json.dumps(log)});</script>",
+                    height=0,
+                )
+
         # --- выбор технических условий (ТУ) ---
         selected_tu_id: Optional[str] = None
         tu_data_for_help: Optional[Dict[str, Any]] = None
@@ -392,6 +401,14 @@ def main() -> None:
                 result = GRAPH.invoke(state)
                 # не сохраняем сырые байты в сессию
                 result.pop("file_bytes", None)
+
+                ocr_messages = [
+                    m for m in result.get("messages", []) if m.startswith("[ocr]")
+                ]
+                if ocr_messages:
+                    st.session_state["ocr_console_logs"] = ocr_messages
+                else:
+                    st.session_state.pop("ocr_console_logs", None)
 
                 # ЛОГИ ТОЛЬКО В КОНСОЛЬ (локально), НЕ В UI
                 print("\n=== GRAPH RESULT (LOCAL LOG) ===")
