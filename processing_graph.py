@@ -11,7 +11,7 @@ from langgraph.graph import StateGraph, END
 
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from yandex_gpt_client import ChatYandexGPT
 
 
 # ---------- 0. Загрузка ТУ ----------
@@ -155,20 +155,56 @@ class RequestFields:
 # ---------- 3. LLM (LangChain) ----------
 
 load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GPT_API_KEY")
-if not api_key:
+yandex_api_key = os.getenv("YANDEX_API_KEY") or os.getenv("YC_API_KEY")
+yandex_folder_id = os.getenv("YANDEX_FOLDER_ID") or os.getenv("YC_FOLDER_ID")
+if not yandex_api_key or not yandex_folder_id:
     raise RuntimeError(
-        "Не найден API-ключ. Установи переменную окружения OPENAI_API_KEY "
-        "или GPT_API_KEY перед запуском."
+        "Не найдены переменные YANDEX_API_KEY (или YC_API_KEY) и YANDEX_FOLDER_ID "
+        "(или YC_FOLDER_ID). Укажи их в .env перед запуском."
     )
 
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0.1,
-    api_key=api_key,
+yandex_model = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-lite")
+yandex_temperature = float(os.getenv("YANDEX_GPT_TEMPERATURE", "0.1"))
+yandex_max_tokens = int(os.getenv("YANDEX_GPT_MAX_TOKENS", "1800"))
+
+llm = ChatYandexGPT(
+    model=yandex_model,
+    temperature=yandex_temperature,
+    max_tokens=yandex_max_tokens,
+    api_key=yandex_api_key,
+    folder_id=yandex_folder_id,
 )
 
-structured_llm = llm.with_structured_output(RequestFieldsModel)
+def _extract_text_from_message(message) -> str:
+    content = message.content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(block.get("text") or block.get("json", ""))
+            else:
+                parts.append(str(block))
+        return "\n".join(part for part in parts if part)
+    return str(content)
+
+
+def _parse_request_fields(raw_json: str) -> RequestFieldsModel:
+    candidate = raw_json.strip()
+    if not candidate:
+        raise ValueError("LLM вернул пустой ответ, не могу разобрать RequestFieldsModel.")
+
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start == -1 or end == -1:
+            raise ValueError(f"Не удалось найти JSON в ответе LLM: {candidate}")
+        data = json.loads(candidate[start : end + 1])
+
+    return RequestFieldsModel(**data)
 
 
 # ---------- 4. Утилиты (OCR/парсинг) ----------
@@ -337,6 +373,12 @@ def text_extraction_node(state: AppState) -> AppState:
 
 def field_extraction_node(state: AppState) -> AppState:
     text = state.get("raw_text", "")
+    if not text.strip():
+        add_msg(
+            state,
+            "[field_extraction] raw_text пустой. Сначала загрузите файл или вставьте текст заявки.",
+        )
+        return state
 
     # Берём ТУ: либо из состояния (state["tu_id"]), либо дефолтный
     tu_id = state.get("tu_id") or DEFAULT_TU_ID
@@ -347,6 +389,8 @@ def field_extraction_node(state: AppState) -> AppState:
         tu_json_for_prompt = "{}"
     else:
         tu_json_for_prompt = json.dumps(tu_cfg["data"], ensure_ascii=False, indent=2)
+
+    schema = RequestFieldsModel.model_json_schema()
 
     system_msg = SystemMessage(
         content=(
@@ -359,19 +403,28 @@ def field_extraction_node(state: AppState) -> AppState:
             "2. Если давление указано в МПа, можешь подобрать ближайший класс из pressure_classes.\n"
             "3. Если указана среда, сопоставь её с кодом из product_types (МГ, РС, НП, ВД, ТС и т.п.).\n"
             "4. Если указаны явные коды (ВД, У1, цифры покрытий и др.), используй их как есть, сверяясь с JSON ТУ.\n"
+            "Возвращай только JSON объект, строго соответствующий схеме RequestFieldsModel."
         )
     )
 
     user_msg = HumanMessage(
         content=(
             "Вот текст опросного листа/заявки. "
-            "Заполни схему RequestFieldsModel, используя JSON с техническими условиями выше.\n\n"
+            "Заполни схему RequestFieldsModel, используя JSON с техническими условиями выше.\n"
+            "Ответ должен быть только JSON. Если значения отсутствуют, ставь null либо пустую строку.\n\n"
             + text[:6000]
         )
     )
 
-    result: RequestFieldsModel = structured_llm.invoke([system_msg, user_msg])
-    fields = RequestFields(**result.dict())
+    response_format = {"json_object": {"schema": schema}}
+    response = llm.invoke([system_msg, user_msg], response_format=response_format)
+    result_json = _extract_text_from_message(response)
+    try:
+        result_model = _parse_request_fields(result_json)
+    except ValueError as exc:
+        add_msg(state, f"[field_extraction][error] {exc}")
+        raise
+    fields = RequestFields(**result_model.dict())
     state["request_fields"] = asdict(fields)
     add_msg(
         state,

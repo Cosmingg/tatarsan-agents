@@ -36,7 +36,7 @@
 ## 🔧 Стек технологий
 
 - **Backend**: LangGraph, Python
-- **ML/AI**: OpenAI GPT-4o-mini, Yandex Vision API
+- **ML/AI**: YandexGPT (LLM), Yandex Vision API
 - **Frontend**: Streamlit
 - **Data**: Pandas, Pydantic, python-docx
 - **Format Support**: PDF, DOCX, XLSX, PNG, JPG
@@ -75,7 +75,11 @@ pip install -r requirements.txt
 ### Конфигурация (.env)
 
 ```bash
-OPENAI_API_KEY="sk-proj-..."              # GPT-4o-mini для LLM
+cp env.template .env
+YANDEX_API_KEY="yc1.AAAAA..."             # API-ключ Яндекс.Облака для YandexGPT
+YANDEX_FOLDER_ID="b1g7mq..."              # catalog folder id
+YANDEX_GPT_MODEL="yandexgpt-lite"         # (опционально) модель генерации
+YANDEX_GPT_TEMPERATURE="0.1"              # (опционально) температура
 YANDEX_OCR_API_KEY="your-yandex-key"      # OCR для документов
 TU_ID="3667-013-05608841-2020"             # (опционально) ТУ по умолчанию
 ```
@@ -95,6 +99,8 @@ streamlit run app.py
 tatarsan_graph/
 ├── app.py                          # Streamlit веб-интерфейс
 ├── processing_graph.py             # LangGraph агенты (ядро системы)
+├── env.template                    # Шаблон переменных окружения
+├── yandex_gpt_client.py            # Клиент для YandexGPT (LLM)
 ├── yandex_ocr_client.py            # Клиент OCR API
 ├── requirements.txt                # Зависимости Python
 ├── tu/                             # База технических условий (JSON)
@@ -139,7 +145,7 @@ tatarsan_graph/
 
 - [LangGraph Docs](https://python.langchain.com/docs/langgraph/)
 - [Streamlit Docs](https://docs.streamlit.io/)
-- [OpenAI API](https://platform.openai.com/docs/api-reference)
+- [YandexGPT API](https://yandex.cloud/ru/docs/ai-studio/operations/generation/create-prompt)
 - [Yandex Vision](https://cloud.yandex.ru/docs/vision/)
 
 ---
